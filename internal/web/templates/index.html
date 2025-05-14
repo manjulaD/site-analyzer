@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Go Site Analyzer</title>
+</head>
+<body>
+<h1>Web Site Analyzer</h1>
+<form method="POST" action="/analyze">
+    <input type="text" name="url" placeholder="Enter URL" required>
+    <button type="submit">Analyze</button>
+</form>
+
+{{if .Title}}
+<h2>Results:</h2>
+<p><strong>Title:</strong> {{.Title}}</p>
+<p><strong>HTML Version:</strong> {{.HTMLVersion}}</p>
+<p><strong>Login Form:</strong> {{.LoginForm}}</p>
+<p><strong>Headings:</strong></p>
+<ul>
+    {{range $k, $v := .Headings}}
+    <li>{{$k}}: {{$v}}</li>
+    {{end}}
+</ul>
+<p><strong>Internal Links:</strong> {{.Internal}}</p>
+<p><strong>External Links:</strong> {{.External}}</p>
+<p><strong>Inaccessible Links:</strong> {{.Inaccessible}}</p>
+{{end}}
+</body>
+</html>
