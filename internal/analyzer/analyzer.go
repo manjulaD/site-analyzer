@@ -1,28 +1,48 @@
 package analyzer
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
+	"sync"
+	"time"
 
 	"golang.org/x/net/html"
 	"site-analyzer/internal/models"
 )
 
-func AnalyzePage(url string) (*models.AnalysisResult, error) {
-	resp, error := http.Get(url)
-	if error != nil {
-		return nil, errors.New("Failed to fetch url :" + error.Error())
+const maxConcurrentRequests = 10
+
+type linkResult struct {
+	Link models.Link
+	Err  error
+}
+
+func AnalyzePage(ctx context.Context, url string) (*models.AnalysisResult, error) {
+
+	client := &http.Client{
+		Timeout: 10 * time.Second,
 	}
 
+	//fetch the web page
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, errors.New("failed to create request: " + err.Error())
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, errors.New("failed to fetch URL: " + err.Error())
+	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != 200 {
+	if resp.StatusCode != http.StatusOK {
 		return nil, errors.New("HTTP error: " + resp.Status)
 	}
-	doc, error := html.Parse(resp.Body)
-	if error != nil {
-		return nil, errors.New("Error parsing HTML document: " + error.Error())
+
+	doc, err := html.Parse(resp.Body)
+	if err != nil {
+		return nil, errors.New("error parsing HTML document: " + err.Error())
 	}
 
 	result := &models.AnalysisResult{
@@ -31,9 +51,10 @@ func AnalyzePage(url string) (*models.AnalysisResult, error) {
 		Headings:    countHeadings(doc),
 		LoginForm:   hasLoginForm(doc),
 	}
+	//
+	links := extractLinks(ctx, doc, url, client)
 
-	links := extractLinks(doc, url)
-
+	// Count link types
 	for _, link := range links {
 		if link.Internal {
 			result.Internal++
@@ -44,8 +65,8 @@ func AnalyzePage(url string) (*models.AnalysisResult, error) {
 			result.Inaccessible++
 		}
 	}
-	return result, nil
 
+	return result, nil
 }
 
 func extractTitle(n *html.Node) string {
@@ -110,35 +131,98 @@ func determineHTMLVersion(n *html.Node) string {
 	return "Unknown"
 }
 
-func extractLinks(n *html.Node, baseURL string) []models.Link {
+func extractLinks(ctx context.Context, n *html.Node, baseURL string, client *http.Client) []models.Link {
 	var links []models.Link
-	var walk func(*html.Node)
-	walk = func(n *html.Node) {
+	var mu sync.Mutex // Protects the links slice
+
+	// Collect links
+	var collectLinks func(*html.Node)
+	collectLinks = func(n *html.Node) {
 		if n.Type == html.ElementNode && n.Data == "a" {
 			for _, attr := range n.Attr {
 				if attr.Key == "href" {
 					href := attr.Val
 					internal := strings.HasPrefix(href, "/") || strings.Contains(href, baseURL)
-					accessible := checkLinkAccessibility(href, baseURL)
-					links = append(links, models.Link{Href: href, Internal: internal, Accessible: accessible})
+					// Append link without accessibility info (will be set later)
+					mu.Lock()
+					links = append(links, models.Link{Href: href, Internal: internal})
+					mu.Unlock()
 				}
 			}
 		}
 		for c := n.FirstChild; c != nil; c = c.NextSibling {
-			walk(c)
+			collectLinks(c)
 		}
 	}
-	walk(n)
+	collectLinks(n)
+
+	// Check accessibility concurrently
+	results := checkLinksAccessibility(ctx, links, baseURL, client)
+
+	// Update links with accessibility results
+	for i, result := range results {
+		links[i].Accessible = result.Err == nil && result.Link.Accessible
+	}
+
 	return links
 }
 
-func checkLinkAccessibility(href, base string) bool {
+func checkLinksAccessibility(ctx context.Context, links []models.Link, baseURL string, client *http.Client) []linkResult {
+	var wg sync.WaitGroup
+	results := make([]linkResult, len(links))
+	channel := make(chan struct{}, maxConcurrentRequests) // Limits concurrency
+
+	for i, link := range links {
+		wg.Add(1)
+		go func(i int, link models.Link) {
+			defer wg.Done()
+
+			// Acquire channel
+			select {
+			case channel <- struct{}{}:
+				defer func() { <-channel }()
+			case <-ctx.Done():
+				results[i] = linkResult{Link: link, Err: ctx.Err()}
+				return
+			}
+
+			// Check accessibility
+			accessible, err := checkLinkAccessibility(ctx, link.Href, baseURL, client)
+			results[i] = linkResult{
+				Link: models.Link{Href: link.Href, Internal: link.Internal, Accessible: accessible},
+				Err:  err,
+			}
+		}(i, link)
+	}
+
+	wg.Wait()
+	return results
+}
+
+// checkLinkAccessibility checks if a single link is accessible using an HTTP HEAD request.
+func checkLinkAccessibility(ctx context.Context, href, baseURL string, client *http.Client) (bool, error) {
+	// Resolve relative URLs
 	if strings.HasPrefix(href, "/") {
-		href = base + href
+		href = baseURL + href
 	}
-	resp, err := http.Head(href)
-	if err != nil || resp.StatusCode >= 400 {
-		return false
+
+	// Skip invalid URLs
+	if !strings.HasPrefix(href, "http://") && !strings.HasPrefix(href, "https://") {
+		return false, errors.New("invalid URL scheme")
 	}
-	return true
+
+	// Create HEAD request
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, href, nil)
+	if err != nil {
+		return false, err
+	}
+
+	// Perform request
+	resp, err := client.Do(req)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+
+	return resp.StatusCode < 400, nil
 }
