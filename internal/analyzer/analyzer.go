@@ -25,7 +25,6 @@ func AnalyzePage(ctx context.Context, url string) (*models.AnalysisResult, error
 		Timeout: 10 * time.Second,
 	}
 
-	//fetch the web page
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, errors.New("failed to create request: " + err.Error())
@@ -51,7 +50,7 @@ func AnalyzePage(ctx context.Context, url string) (*models.AnalysisResult, error
 		Headings:    countHeadings(doc),
 		LoginForm:   hasLoginForm(doc),
 	}
-	//
+
 	links := extractLinks(ctx, doc, url, client)
 
 	// Count link types
@@ -120,12 +119,22 @@ func hasLoginForm(n *html.Node) bool {
 }
 
 func determineHTMLVersion(n *html.Node) string {
-	for c := n; c != nil; c = c.NextSibling {
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
 		if c.Type == html.DoctypeNode {
-			if strings.Contains(strings.ToLower(c.Data), "html") {
+			data := strings.ToLower(c.Data)
+			switch {
+
+			case strings.Contains(data, "html 4.01"):
+				return "HTML 4.01"
+			case data == "html":
 				return "HTML5"
+			case strings.Contains(data, "xhtml 1.0"):
+				return "XHTML 1.0"
+			case strings.Contains(data, "xhtml 1.1"):
+				return "XHTML 1.1"
+			default:
+				return "Older HTML version"
 			}
-			return "Older HTML version"
 		}
 	}
 	return "Unknown"
@@ -133,9 +142,8 @@ func determineHTMLVersion(n *html.Node) string {
 
 func extractLinks(ctx context.Context, n *html.Node, baseURL string, client *http.Client) []models.Link {
 	var links []models.Link
-	var mu sync.Mutex // Protects the links slice
+	var mu sync.Mutex
 
-	// Collect links
 	var collectLinks func(*html.Node)
 	collectLinks = func(n *html.Node) {
 		if n.Type == html.ElementNode && n.Data == "a" {
@@ -143,7 +151,7 @@ func extractLinks(ctx context.Context, n *html.Node, baseURL string, client *htt
 				if attr.Key == "href" {
 					href := attr.Val
 					internal := strings.HasPrefix(href, "/") || strings.Contains(href, baseURL)
-					// Append link without accessibility info (will be set later)
+
 					mu.Lock()
 					links = append(links, models.Link{Href: href, Internal: internal})
 					mu.Unlock()
@@ -156,10 +164,8 @@ func extractLinks(ctx context.Context, n *html.Node, baseURL string, client *htt
 	}
 	collectLinks(n)
 
-	// Check accessibility concurrently
 	results := checkLinksAccessibility(ctx, links, baseURL, client)
 
-	// Update links with accessibility results
 	for i, result := range results {
 		links[i].Accessible = result.Err == nil && result.Link.Accessible
 	}
@@ -177,7 +183,6 @@ func checkLinksAccessibility(ctx context.Context, links []models.Link, baseURL s
 		go func(i int, link models.Link) {
 			defer wg.Done()
 
-			// Acquire channel
 			select {
 			case channel <- struct{}{}:
 				defer func() { <-channel }()
@@ -186,7 +191,6 @@ func checkLinksAccessibility(ctx context.Context, links []models.Link, baseURL s
 				return
 			}
 
-			// Check accessibility
 			accessible, err := checkLinkAccessibility(ctx, link.Href, baseURL, client)
 			results[i] = linkResult{
 				Link: models.Link{Href: link.Href, Internal: link.Internal, Accessible: accessible},
@@ -201,7 +205,7 @@ func checkLinksAccessibility(ctx context.Context, links []models.Link, baseURL s
 
 // checkLinkAccessibility checks if a single link is accessible using an HTTP HEAD request.
 func checkLinkAccessibility(ctx context.Context, href, baseURL string, client *http.Client) (bool, error) {
-	// Resolve relative URLs
+
 	if strings.HasPrefix(href, "/") {
 		href = baseURL + href
 	}
@@ -217,7 +221,6 @@ func checkLinkAccessibility(ctx context.Context, href, baseURL string, client *h
 		return false, err
 	}
 
-	// Perform request
 	resp, err := client.Do(req)
 	if err != nil {
 		return false, err
