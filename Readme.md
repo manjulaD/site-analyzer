@@ -40,5 +40,7 @@ Now, access the application in your browser at:
 ```
 http://localhost:8080
 ```
-
+## Possible Improvements
+### 1.Implement caching for already checked urls
+### 2.Implement duplicate link check 
 
