@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
 
-	"golang.org/x/net/html"
 	"site-analyzer/internal/models"
+
+	"golang.org/x/net/html"
 )
 
 const maxConcurrentRequests = 10
@@ -121,7 +123,7 @@ func hasLoginForm(n *html.Node) bool {
 func determineHTMLVersion(n *html.Node) string {
 	for c := n.FirstChild; c != nil; c = c.NextSibling {
 		if c.Type == html.DoctypeNode {
-			data := strings.ToLower(c.Data)
+			data := strings.ToLower(strings.TrimSpace(c.Data))
 			switch {
 
 			case strings.Contains(data, "html 4.01"):
@@ -150,7 +152,18 @@ func extractLinks(ctx context.Context, n *html.Node, baseURL string, client *htt
 			for _, attr := range n.Attr {
 				if attr.Key == "href" {
 					href := attr.Val
-					internal := strings.HasPrefix(href, "/") || strings.Contains(href, baseURL)
+					parsedURL, err := url.Parse(href)
+					if err != nil {
+						continue // Skip malformed URLs
+					}
+					resolvedURL := baseURL
+					if !parsedURL.IsAbs() {
+						base, err := url.Parse(baseURL)
+						if err == nil {
+							resolvedURL = base.ResolveReference(parsedURL).String()
+						}
+					}
+					internal := strings.HasPrefix(resolvedURL, baseURL)
 
 					mu.Lock()
 					links = append(links, models.Link{Href: href, Internal: internal})
@@ -167,7 +180,7 @@ func extractLinks(ctx context.Context, n *html.Node, baseURL string, client *htt
 	results := checkLinksAccessibility(ctx, links, baseURL, client)
 
 	for i, result := range results {
-		links[i].Accessible = result.Err == nil && result.Link.Accessible
+		links[i].Accessible = (result.Err == nil)
 	}
 
 	return links

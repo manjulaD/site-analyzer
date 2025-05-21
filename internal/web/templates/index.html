@@ -2,14 +2,85 @@
 <html>
 <head>
     <title>Go Site Analyzer</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            margin: 0;
+            padding: 0;
+            background-color: #f4f4f9;
+            color: #333;
+        }
+        header {
+            background: #0078d7;
+            color: #fff;
+            padding: 1rem 0;
+            text-align: center;
+        }
+        h1 {
+            margin: 0;
+        }
+        form {
+            max-width: 600px;
+            margin: 2rem auto;
+            padding: 1rem;
+            background: #fff;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+        }
+        input[type="text"] {
+            width: calc(100% - 22px);
+            padding: 10px;
+            margin-bottom: 1rem;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        button {
+            background: #0078d7;
+            color: #fff;
+            border: none;
+            padding: 10px 15px;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        button:hover {
+            background: #005bb5;
+        }
+        h2 {
+            text-align: center;
+            margin-top: 2rem;
+        }
+        p, ul {
+            max-width: 600px;
+            margin: 1rem auto;
+            background: #fff;
+            padding: 1rem;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+        }
+        ul {
+            list-style: none;
+            padding: 0;
+        }
+        ul li {
+            padding: 5px 0;
+        }
+    </style>
 </head>
 <body>
-<h1>Web Site Analyzer</h1>
+<header>
+    <h1>Web Site Analyzer</h1>
+</header>
 <form method="POST" action="/analyze">
     <input type="text" name="url" placeholder="Enter URL" required>
     <button type="submit">Analyze</button>
 </form>
 
+{{if .Error}}
+<p style="color: red; text-align: center;"><strong>Error:</strong> {{.Error}}</p>
+{{end}}
 {{if .Title}}
 <h2>Results:</h2>
 <p><strong>Title:</strong> {{.Title}}</p>

@@ -1,13 +1,14 @@
 package main
 
 import (
-	"golang.org/x/net/context"
 	"html/template"
 	"log/slog"
 	"net/http"
 	"os"
 	"site-analyzer/internal/analyzer"
 	"time"
+
+	"golang.org/x/net/context"
 )
 
 var tmpl = template.Must(template.ParseFiles("internal/web/templates/index.html"))
@@ -47,12 +48,26 @@ func analyzeHandler(w http.ResponseWriter, r *http.Request) {
 
 	result, err := analyzer.AnalyzePage(ctx, url)
 	if err != nil {
-		http.Error(w, "Error analyzing page: "+err.Error(), http.StatusInternalServerError)
+
+		tmpl.Execute(w, map[string]interface{}{
+			"Error": "Error analyzing page: " + err.Error(),
+		})
 		return
 	}
 
-	error_excecute := tmpl.Execute(w, result)
-	if error_excecute != nil {
-		return
+	data := map[string]interface{}{
+		"Error":        nil, // No error
+		"Title":        result.Title,
+		"HTMLVersion":  result.HTMLVersion,
+		"LoginForm":    result.LoginForm,
+		"Headings":     result.Headings,
+		"Internal":     result.Internal,
+		"External":     result.External,
+		"Inaccessible": result.Inaccessible,
+	}
+
+	errorExecute := tmpl.Execute(w, data)
+	if errorExecute != nil {
+		http.Error(w, "Error rendering template: "+errorExecute.Error(), http.StatusInternalServerError)
 	}
 }
